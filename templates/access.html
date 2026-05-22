@@ -44,6 +44,10 @@
                 <span class="icon"><i class="fas fa-running"></i></span>
                 <span>Run an Ability</span>
             </button>
+            <button class="button is-primary is-small mr-4" @click="showCommandModal = true">
+                <span class="icon"><i class="fas fa-terminal"></i></span>
+                <span>Run Command</span>
+            </button>
             <span class="mr-4"><strong>Agent Platform</strong>: <span x-text="selectedAgent.platform"></span></span>
             <span><strong>Compatible Abilities</strong>: <span x-text="filteredAbilities.length"></span></span>
         </div>
@@ -92,6 +96,62 @@
                 <pre x-text="outputResult.stdout || '[ no output to show ]'"></pre>
                 <label class="label">Standard Error</label>
                 <pre x-text="outputResult.stderr || '[ no errors to show ]'"></pre>
+                <hr>
+                <label class="label">Parser Debugger</label>
+                <p class="is-size-7 mb-2">Select a parser from the list or enter a custom path. The file is reloaded from disk on every parse call — edit and re-run without restarting Caldera.</p>
+                <div class="field">
+                    <label class="label is-small">Parser</label>
+                    <div class="control">
+                        <div class="select is-small is-fullwidth">
+                            <select x-on:change="parserPath = $event.target.value">
+                                <option value="">-- Select a parser --</option>
+                                <template x-for="group of parserGroups" :key="group.plugin">
+                                    <optgroup x-bind:label="group.plugin">
+                                        <template x-for="p of group.parsers" :key="p.path">
+                                            <option x-bind:value="p.path" x-text="p.name"></option>
+                                        </template>
+                                    </optgroup>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                <div class="field has-addons">
+                    <div class="control is-expanded">
+                        <input class="input is-small" x-model="parserPath" placeholder="/absolute/path/to/parser.py">
+                    </div>
+                    <div class="control">
+                        <button class="button is-small is-primary" @click="parseOutput()">Parse</button>
+                    </div>
+                </div>
+                <div class="field">
+                    <label class="label is-small">Mappers (optional JSON array: [{&quot;source&quot;:&quot;host.ip&quot;,&quot;edge&quot;:&quot;has_port&quot;,&quot;target&quot;:&quot;host.port&quot;}])</label>
+                    <div class="control">
+                        <textarea class="textarea is-small" x-model="parserMappersRaw" rows="2"></textarea>
+                    </div>
+                </div>
+                <template x-if="parsedRelationships.length">
+                    <div>
+                        <label class="label is-small">Parsed Relationships</label>
+                        <table class="table is-striped is-fullwidth is-narrow">
+                            <thead>
+                                <tr><th>Source trait</th><th>Source value</th><th>Edge</th><th>Target trait</th><th>Target value</th></tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="(r, i) in parsedRelationships" :key="i">
+                                    <tr>
+                                        <td x-text="r.source.trait"></td>
+                                        <td x-text="r.source.value"></td>
+                                        <td x-text="r.edge"></td>
+                                        <td x-text="r.target ? r.target.trait : ''"></td>
+                                        <td x-text="r.target ? r.target.value : ''"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </template>
+                <p class="is-size-7 has-text-grey" x-show="parsedRelationships.length === 0 && parserPath">No relationships returned.</p>
             </section>
             <footer class="modal-card-foot">
                 <nav class="level">
@@ -99,6 +159,70 @@
                     <div class="level-right">
                         <div class="level-item">
                             <button class="button is-small" @click="showOutputModal = false">Close</button>
+                        </div>
+                    </div>
+                </nav>
+            </footer>
+        </div>
+    </div>
+
+    <div class="modal" x-bind:class="{ 'is-active': showCommandModal }">
+        <div class="modal-background" @click="showCommandModal = false"></div>
+        <div class="modal-card">
+            <header class="modal-card-head">
+                <p class="modal-card-title">Run Command</p>
+            </header>
+            <section class="modal-card-body">
+                <div class="field">
+                    <label class="label is-small">Command</label>
+                    <div class="control">
+                        <textarea class="textarea is-small" x-model="adhocCommand" rows="4" placeholder="Enter a command..."></textarea>
+                    </div>
+                </div>
+                <div class="field is-horizontal">
+                    <div class="field-label is-small">
+                        <label class="label">Executor</label>
+                    </div>
+                    <div class="field-body">
+                        <div class="field">
+                            <div class="control">
+                                <div class="select is-small is-fullwidth">
+                                    <select x-model="adhocExecutor">
+                                        <template x-for="ex of (selectedAgent.executors || [])" :key="ex">
+                                            <option x-bind:value="ex" x-text="ex"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="field is-horizontal">
+                    <div class="field-label is-small">
+                        <label class="label">Obfuscator</label>
+                    </div>
+                    <div class="field-body">
+                        <div class="field">
+                            <div class="control">
+                                <div class="select is-small is-fullwidth">
+                                    <select x-model="adhocObfuscator">
+                                        <template x-for="obf of obfuscators" :key="obf.name">
+                                            <option x-bind:value="obf.name" x-text="obf.name"></option>
+                                        </template>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <button class="button is-small is-primary is-fullwidth" @click="executeCommand()">Execute</button>
+            </section>
+            <footer class="modal-card-foot">
+                <nav class="level">
+                    <div class="level-left"></div>
+                    <div class="level-right">
+                        <div class="level-item">
+                            <button class="button is-small" @click="showCommandModal = false">Close</button>
                         </div>
                     </div>
                 </nav>
@@ -283,6 +407,16 @@
             showRunModal: false,
             facts: [],
 
+            showCommandModal: false,
+            adhocCommand: '',
+            adhocExecutor: '',
+            adhocObfuscator: 'plain-text',
+
+            parserGroups: [],
+            parserPath: '',
+            parserMappersRaw: '[]',
+            parsedRelationships: [],
+
             initPage() {
                 apiV2('GET', '/api/v2/agents').then((agents) => {
                     this.agents = agents;
@@ -306,6 +440,7 @@
             selectAgent() {
                 this.selectedAgent = this.agents.find((agent) => agent.paw === this.selectedAgentPaw);
                 this.links = this.selectedAgent.links;
+                this.adhocExecutor = (this.selectedAgent.executors || [])[0] || '';
                 this.filterAbilitiesByPlatform();
             },
 
@@ -350,6 +485,8 @@
                     } catch (SyntaxError) {
                         this.outputResult = ""
                     }
+                    this.parsedRelationships = [];
+                    apiV2('GET', '/plugin/access/parsers').then((d) => { this.parserGroups = d.groups; });
                     this.showOutputModal = true;
                 });
             },
@@ -414,6 +551,42 @@
                 }).catch((error) => {
                     console.error(error);
                 })
+            },
+
+            executeCommand() {
+                if (!this.adhocCommand.trim()) {
+                    toast('Command cannot be empty', false);
+                    return;
+                }
+                apiV2('POST', '/plugin/access/execute', {
+                    paw: this.selectedAgentPaw,
+                    command: this.adhocCommand,
+                    executor: this.adhocExecutor,
+                    obfuscator: this.adhocObfuscator
+                }).then(() => {
+                    this.showCommandModal = false;
+                    this.adhocCommand = '';
+                    this.refreshAgents();
+                    toast('Command sent', true);
+                }).catch(console.error);
+            },
+
+            parseOutput() {
+                let mappers = [];
+                try {
+                    mappers = JSON.parse(this.parserMappersRaw);
+                } catch (e) {
+                    toast('Invalid mappers JSON', false);
+                    return;
+                }
+                apiV2('POST', '/plugin/access/parse', {
+                    output: this.outputResult.stdout || '',
+                    parser_path: this.parserPath,
+                    mappers: mappers
+                }).then((data) => {
+                    if (data.error) { toast(data.error, false); return; }
+                    this.parsedRelationships = data.relationships;
+                }).catch(console.error);
             }
 
         };

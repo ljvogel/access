@@ -51,7 +51,15 @@ import { b64DecodeUnicode } from "@/utils/utils";
           outputCommand: '',
           outputResult: '',
           showRunModal: false,
-          facts: []
+          facts: [],
+          showCommandModal: false,
+          adhocCommand: '',
+          adhocExecutor: '',
+          adhocObfuscator: 'plain-text',
+          parserGroups: [],
+          parserPath: '',
+          parserMappersRaw: '[]',
+          parsedRelationships: []
         };
       },
       created() {
@@ -79,6 +87,7 @@ import { b64DecodeUnicode } from "@/utils/utils";
         selectAgent() {
           this.selectedAgent = this.agents.find((agent) => agent.paw === this.selectedAgentPaw);
           this.links = this.selectedAgent.links;
+          this.adhocExecutor = (this.selectedAgent.executors || [])[0] || '';
           this.filterAbilitiesByPlatform();
         },
 
@@ -124,6 +133,8 @@ import { b64DecodeUnicode } from "@/utils/utils";
             } catch (SyntaxError) {
               this.outputResult = ""
             }
+            this.parsedRelationships = [];
+            this.$api.get('/plugin/access/parsers').then((r) => { this.parserGroups = r.data.groups; });
             this.showOutputModal = true;
           });
         },
@@ -189,6 +200,48 @@ import { b64DecodeUnicode } from "@/utils/utils";
           }
         },
 
+        async executeCommand() {
+          if (!this.adhocCommand.trim()) {
+            this.toast('Command cannot be empty', false);
+            return;
+          }
+          try {
+            await this.$api.post('/plugin/access/execute', {
+              paw: this.selectedAgentPaw,
+              command: this.adhocCommand,
+              executor: this.adhocExecutor,
+              obfuscator: this.adhocObfuscator
+            });
+            this.showCommandModal = false;
+            this.adhocCommand = '';
+            this.refreshAgents();
+            this.toast('Command sent', true);
+          } catch (error) {
+            console.error(error);
+          }
+        },
+
+        async parseOutput() {
+          let mappers = [];
+          try {
+            mappers = JSON.parse(this.parserMappersRaw);
+          } catch (e) {
+            this.toast('Invalid mappers JSON', false);
+            return;
+          }
+          try {
+            const res = await this.$api.post('/plugin/access/parse', {
+              output: this.outputResult.stdout || '',
+              parser_path: this.parserPath,
+              mappers: mappers
+            });
+            if (res.data.error) { this.toast(res.data.error, false); return; }
+            this.parsedRelationships = res.data.relationships;
+          } catch (error) {
+            console.error(error);
+          }
+        },
+
         sleep(ms) {
           return new Promise(resolve => setTimeout(resolve, ms));
         },
@@ -227,6 +280,10 @@ div.mb-3(v-show="selectedAgentPaw")
             span.icon
                 i.fas.fa-running
             span Run an Ability
+        button.button.is-primary.is-small.mr-6(@click="showCommandModal = true")
+            span.icon
+                i.fas.fa-terminal
+            span Run Command
         span.mr-6
             strong.mr-4 Agent Platform
             span(v-text="selectedAgent.platform")
@@ -265,12 +322,89 @@ div.modal(v-bind:class="{ 'is-active': showOutputModal }")
             pre(v-text="outputCommand")
             label.label Standard Output
             pre(v-text="outputResult.stdout || '[ no output to show ]'")
+            label.label Standard Error
+            pre(v-text="outputResult.stderr || '[ no errors to show ]'")
+            hr
+            label.label Parser Debugger
+            p.is-size-7.mb-2 Select a parser from the list or enter a custom path. The file is reloaded from disk on every parse call — edit and re-run without restarting Caldera.
+            .field
+                label.label.is-small Parser
+                .control
+                    div.select.is-small.is-fullwidth
+                        select(@change="parserPath = $event.target.value")
+                            option(value="") -- Select a parser --
+                            template(v-for="group in parserGroups" :key="group.plugin")
+                                optgroup(:label="group.plugin")
+                                    option(v-for="p in group.parsers" :key="p.path" :value="p.path") {{ p.name }}
+            .field.has-addons
+                .control.is-expanded
+                    input.input.is-small(v-model="parserPath" placeholder="/absolute/path/to/parser.py")
+                .control
+                    button.button.is-small.is-primary(@click="parseOutput()") Parse
+            .field
+                label.label.is-small Mappers (optional JSON array)
+                .control
+                    textarea.textarea.is-small(v-model="parserMappersRaw" rows="2")
+            div(v-if="parsedRelationships.length")
+                label.label.is-small Parsed Relationships
+                table.table.is-striped.is-fullwidth.is-narrow
+                    thead
+                        tr
+                            th Source trait
+                            th Source value
+                            th Edge
+                            th Target trait
+                            th Target value
+                    tbody
+                        tr(v-for="(r, i) in parsedRelationships" :key="i")
+                            td(v-text="r.source.trait")
+                            td(v-text="r.source.value")
+                            td(v-text="r.edge")
+                            td(v-text="r.target ? r.target.trait : ''")
+                            td(v-text="r.target ? r.target.value : ''")
+            p.is-size-7.has-text-grey(v-show="parsedRelationships.length === 0 && parserPath") No relationships returned.
         footer.modal-card-foot
             nav.level
                 .level-left
                 .level-right
                     .level-item
                         button.button.is-small(@click="showOutputModal = false") Close
+
+div.modal(v-bind:class="{ 'is-active': showCommandModal }")
+    .modal-background(@click="showCommandModal = false")
+    .modal-card
+        header.modal-card-head
+            p.modal-card-title Run Command
+        section.modal-card-body
+            .field
+                label.label.is-small Command
+                .control
+                    textarea.textarea.is-small(v-model="adhocCommand" rows="4" placeholder="Enter a command...")
+            .field.is-horizontal
+                .field-label.is-small
+                    label.label Executor
+                .field-body
+                    .field
+                        .control
+                            div.select.is-small.is-fullwidth
+                                select(v-model="adhocExecutor")
+                                    option(v-for="ex in (selectedAgent.executors || [])" :key="ex" :value="ex") {{ ex }}
+            .field.is-horizontal
+                .field-label.is-small
+                    label.label Obfuscator
+                .field-body
+                    .field
+                        .control
+                            div.select.is-small.is-fullwidth
+                                select(v-model="adhocObfuscator")
+                                    option(v-for="obf in obfuscators" :key="obf.name" :value="obf.name") {{ obf.name }}
+            button.button.is-small.is-primary.is-fullwidth(@click="executeCommand()") Execute
+        footer.modal-card-foot
+            nav.level
+                .level-left
+                .level-right
+                    .level-item
+                        button.button.is-small(@click="showCommandModal = false") Close
 
 div.modal(v-bind:class="{ 'is-active': showRunModal }")
     .modal-background(@click="showRunModal = false")

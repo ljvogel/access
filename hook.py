@@ -15,3 +15,6 @@ async def enable(services):
     app.router.add_route('POST', '/plugin/access/exploit', access_api.exploit)
     app.router.add_route('POST', '/plugin/access/abilities', access_api.abilities)
     app.router.add_route('POST', '/plugin/access/executor', access_api.executor)
+    app.router.add_route('POST', '/plugin/access/execute', access_api.execute)
+    app.router.add_route('POST', '/plugin/access/parse', access_api.parse)
+    app.router.add_route('GET', '/plugin/access/parsers', access_api.get_parsers)
