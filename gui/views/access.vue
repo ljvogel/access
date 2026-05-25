@@ -56,9 +56,13 @@ import { b64DecodeUnicode } from "@/utils/utils";
           adhocCommand: '',
           adhocExecutor: '',
           adhocObfuscator: 'plain-text',
+          showAdvancedOptions: false,
+          adhocTimeout: 60,
+          availablePayloads: [],
+          selectedPayloads: [],
           parserGroups: [],
           parserPath: '',
-          parserMappersRaw: '[]',
+          parserMappers: [],
           parsedRelationships: []
         };
       },
@@ -87,7 +91,10 @@ import { b64DecodeUnicode } from "@/utils/utils";
         selectAgent() {
           this.selectedAgent = this.agents.find((agent) => agent.paw === this.selectedAgentPaw);
           this.links = this.selectedAgent.links;
-          this.adhocExecutor = (this.selectedAgent.executors || [])[0] || '';
+          const executors = this.selectedAgent.executors || [];
+          if (!executors.includes(this.adhocExecutor)) {
+            this.adhocExecutor = executors[0] || '';
+          }
           this.filterAbilitiesByPlatform();
         },
 
@@ -200,6 +207,33 @@ import { b64DecodeUnicode } from "@/utils/utils";
           }
         },
 
+        async openCommandModal() {
+          this.showAdvancedOptions = false;
+          this.selectedPayloads = [];
+          try {
+            const res = await this.$api.get('/api/v2/payloads');
+            this.availablePayloads = res.data;
+          } catch (error) {
+            console.error(error);
+          }
+          this.showCommandModal = true;
+        },
+
+        uploadPayload(event) {
+          const file = event.target.files[0];
+          if (!file) return;
+          const fd = new FormData();
+          fd.append('file', file);
+          fetch('/api/v2/payloads', { method: 'POST', body: fd })
+            .then((r) => r.json())
+            .then((data) => {
+              this.availablePayloads = [...this.availablePayloads, ...data.payloads];
+              this.selectedPayloads = [...this.selectedPayloads, ...data.payloads];
+              event.target.value = '';
+              this.toast('Payload uploaded', true);
+            }).catch(console.error);
+        },
+
         async executeCommand() {
           if (!this.adhocCommand.trim()) {
             this.toast('Command cannot be empty', false);
@@ -210,10 +244,13 @@ import { b64DecodeUnicode } from "@/utils/utils";
               paw: this.selectedAgentPaw,
               command: this.adhocCommand,
               executor: this.adhocExecutor,
-              obfuscator: this.adhocObfuscator
+              obfuscator: this.adhocObfuscator,
+              timeout: this.adhocTimeout,
+              payloads: this.selectedPayloads
             });
             this.showCommandModal = false;
             this.adhocCommand = '';
+            this.selectedPayloads = [];
             this.refreshAgents();
             this.toast('Command sent', true);
           } catch (error) {
@@ -221,19 +258,20 @@ import { b64DecodeUnicode } from "@/utils/utils";
           }
         },
 
+        addMapper() {
+          this.parserMappers.push({ source: '', edge: '', target: '' });
+        },
+
+        removeMapper(index) {
+          this.parserMappers.splice(index, 1);
+        },
+
         async parseOutput() {
-          let mappers = [];
-          try {
-            mappers = JSON.parse(this.parserMappersRaw);
-          } catch (e) {
-            this.toast('Invalid mappers JSON', false);
-            return;
-          }
           try {
             const res = await this.$api.post('/plugin/access/parse', {
               output: this.outputResult.stdout || '',
               parser_path: this.parserPath,
-              mappers: mappers
+              mappers: this.parserMappers
             });
             if (res.data.error) { this.toast(res.data.error, false); return; }
             this.parsedRelationships = res.data.relationships;
@@ -280,7 +318,7 @@ div.mb-3(v-show="selectedAgentPaw")
             span.icon
                 i.fas.fa-running
             span Run an Ability
-        button.button.is-primary.is-small.mr-6(@click="showCommandModal = true")
+        button.button.is-primary.is-small.mr-6(@click="openCommandModal()")
             span.icon
                 i.fas.fa-terminal
             span Run Command
@@ -342,9 +380,17 @@ div.modal(v-bind:class="{ 'is-active': showOutputModal }")
                 .control
                     button.button.is-small.is-primary(@click="parseOutput()") Parse
             .field
-                label.label.is-small Mappers (optional JSON array)
-                .control
-                    textarea.textarea.is-small(v-model="parserMappersRaw" rows="2")
+                label.label.is-small Mappers
+                div(v-for="(mapper, index) in parserMappers" :key="index").columns.is-mobile.is-vcentered.mb-1
+                    .column
+                        input.input.is-small(v-model="mapper.source" placeholder="source")
+                    .column
+                        input.input.is-small(v-model="mapper.edge" placeholder="edge")
+                    .column
+                        input.input.is-small(v-model="mapper.target" placeholder="target")
+                    .column.is-narrow
+                        button.button.is-danger.is-small.is-outlined(@click="removeMapper(index)") ×
+                button.button.is-small.is-light.mt-1(@click="addMapper()") + Add Mapper
             div(v-if="parsedRelationships.length")
                 label.label.is-small Parsed Relationships
                 table.table.is-striped.is-fullwidth.is-narrow
@@ -398,6 +444,33 @@ div.modal(v-bind:class="{ 'is-active': showCommandModal }")
                             div.select.is-small.is-fullwidth
                                 select(v-model="adhocObfuscator")
                                     option(v-for="obf in obfuscators" :key="obf.name" :value="obf.name") {{ obf.name }}
+            hr
+            button.button.is-ghost.is-small.is-fullwidth.has-text-left(type="button" @click="showAdvancedOptions = !showAdvancedOptions")
+                span.icon.is-small
+                    i.fas(:class="showAdvancedOptions ? 'fa-chevron-down' : 'fa-chevron-right'")
+                span Advanced Options
+            div(v-show="showAdvancedOptions")
+                .field.is-horizontal.mt-2
+                    .field-label.is-small
+                        label.label Timeout (s)
+                    .field-body
+                        .field
+                            .control
+                                input.input.is-small(type="number" min="1" v-model.number="adhocTimeout")
+                .field
+                    label.label.is-small Payloads
+                    .payload-list
+                        p.is-size-7.has-text-grey(v-if="!availablePayloads.length") No payloads found.
+                        label.checkbox.is-block.is-size-7(v-for="p in availablePayloads" :key="p")
+                            input(type="checkbox" :value="p" v-model="selectedPayloads")
+                            |  {{ p }}
+                    .mt-2
+                        input(type="file" ref="payloadFileInput" class="is-hidden" @change="uploadPayload($event)")
+                        button.button.is-small.is-fullwidth(type="button" @click="$refs.payloadFileInput.click()")
+                            span.icon.is-small
+                                i.fas.fa-upload
+                            span Upload custom payload
+            hr
             button.button.is-small.is-primary.is-fullwidth(@click="executeCommand()") Execute
         footer.modal-card-foot
             nav.level
@@ -518,5 +591,13 @@ div.modal(v-bind:class="{ 'is-active': showRunModal }")
 }
 .search-results p:hover {
     background-color: #484848;
+}
+.payload-list {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #dbdbdb;
+    border-radius: 4px;
+    padding: 6px 8px;
+    background: #1a1a1a;
 }
 </style>

@@ -44,7 +44,7 @@
                 <span class="icon"><i class="fas fa-running"></i></span>
                 <span>Run an Ability</span>
             </button>
-            <button class="button is-primary is-small mr-4" @click="showCommandModal = true">
+            <button class="button is-primary is-small mr-4" @click="openCommandModal()">
                 <span class="icon"><i class="fas fa-terminal"></i></span>
                 <span>Run Command</span>
             </button>
@@ -125,10 +125,18 @@
                     </div>
                 </div>
                 <div class="field">
-                    <label class="label is-small">Mappers (optional JSON array: [{&quot;source&quot;:&quot;host.ip&quot;,&quot;edge&quot;:&quot;has_port&quot;,&quot;target&quot;:&quot;host.port&quot;}])</label>
-                    <div class="control">
-                        <textarea class="textarea is-small" x-model="parserMappersRaw" rows="2"></textarea>
-                    </div>
+                    <label class="label is-small">Mappers</label>
+                    <template x-for="(mapper, index) in parserMappers" :key="index">
+                        <div class="columns is-mobile is-vcentered mb-1">
+                            <div class="column"><input class="input is-small" x-model="mapper.source" placeholder="source"></div>
+                            <div class="column"><input class="input is-small" x-model="mapper.edge" placeholder="edge"></div>
+                            <div class="column"><input class="input is-small" x-model="mapper.target" placeholder="target"></div>
+                            <div class="column is-narrow">
+                                <button class="button is-danger is-small is-outlined" @click="removeMapper(index)">&#215;</button>
+                            </div>
+                        </div>
+                    </template>
+                    <button class="button is-small is-light mt-1" @click="addMapper()">+ Add Mapper</button>
                 </div>
                 <template x-if="parsedRelationships.length">
                     <div>
@@ -215,6 +223,47 @@
                         </div>
                     </div>
                 </div>
+                <hr>
+                <button class="button is-ghost is-small is-fullwidth has-text-left" type="button" @click="showAdvancedOptions = !showAdvancedOptions">
+                    <span class="icon is-small"><i class="fas" x-bind:class="showAdvancedOptions ? 'fa-chevron-down' : 'fa-chevron-right'"></i></span>
+                    <span>Advanced Options</span>
+                </button>
+                <div x-show="showAdvancedOptions">
+                    <div class="field is-horizontal mt-2">
+                        <div class="field-label is-small">
+                            <label class="label">Timeout (s)</label>
+                        </div>
+                        <div class="field-body">
+                            <div class="field">
+                                <div class="control">
+                                    <input class="input is-small" type="number" min="1" x-model.number="adhocTimeout">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="field">
+                        <label class="label is-small">Payloads</label>
+                        <div class="payload-list">
+                            <template x-if="!availablePayloads.length">
+                                <p class="is-size-7 has-text-grey">No payloads found.</p>
+                            </template>
+                            <template x-for="p of availablePayloads" :key="p">
+                                <label class="checkbox is-block is-size-7">
+                                    <input type="checkbox" x-bind:value="p" x-model="selectedPayloads">
+                                    <span x-text="p"></span>
+                                </label>
+                            </template>
+                        </div>
+                        <div class="mt-2">
+                            <input type="file" x-ref="payloadFileInput" class="is-hidden" @change="uploadPayload($event)">
+                            <button class="button is-small is-fullwidth" type="button" @click="$refs.payloadFileInput.click()">
+                                <span class="icon is-small"><i class="fas fa-upload"></i></span>
+                                <span>Upload custom payload</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <hr>
                 <button class="button is-small is-primary is-fullwidth" @click="executeCommand()">Execute</button>
             </section>
             <footer class="modal-card-foot">
@@ -411,10 +460,14 @@
             adhocCommand: '',
             adhocExecutor: '',
             adhocObfuscator: 'plain-text',
+            showAdvancedOptions: false,
+            adhocTimeout: 60,
+            availablePayloads: [],
+            selectedPayloads: [],
 
             parserGroups: [],
             parserPath: '',
-            parserMappersRaw: '[]',
+            parserMappers: [],
             parsedRelationships: [],
 
             initPage() {
@@ -440,7 +493,10 @@
             selectAgent() {
                 this.selectedAgent = this.agents.find((agent) => agent.paw === this.selectedAgentPaw);
                 this.links = this.selectedAgent.links;
-                this.adhocExecutor = (this.selectedAgent.executors || [])[0] || '';
+                const executors = this.selectedAgent.executors || [];
+                if (!executors.includes(this.adhocExecutor)) {
+                    this.adhocExecutor = executors[0] || '';
+                }
                 this.filterAbilitiesByPlatform();
             },
 
@@ -553,6 +609,28 @@
                 })
             },
 
+            openCommandModal() {
+                this.showAdvancedOptions = false;
+                this.selectedPayloads = [];
+                apiV2('GET', '/api/v2/payloads').then((data) => { this.availablePayloads = data; }).catch(console.error);
+                this.showCommandModal = true;
+            },
+
+            uploadPayload(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                const fd = new FormData();
+                fd.append('file', file);
+                fetch('/api/v2/payloads', { method: 'POST', body: fd })
+                    .then((r) => r.json())
+                    .then((data) => {
+                        this.availablePayloads = [...this.availablePayloads, ...data.payloads];
+                        this.selectedPayloads = [...this.selectedPayloads, ...data.payloads];
+                        event.target.value = '';
+                        toast('Payload uploaded', true);
+                    }).catch(console.error);
+            },
+
             executeCommand() {
                 if (!this.adhocCommand.trim()) {
                     toast('Command cannot be empty', false);
@@ -562,27 +640,31 @@
                     paw: this.selectedAgentPaw,
                     command: this.adhocCommand,
                     executor: this.adhocExecutor,
-                    obfuscator: this.adhocObfuscator
+                    obfuscator: this.adhocObfuscator,
+                    timeout: this.adhocTimeout,
+                    payloads: this.selectedPayloads
                 }).then(() => {
                     this.showCommandModal = false;
                     this.adhocCommand = '';
+                    this.selectedPayloads = [];
                     this.refreshAgents();
                     toast('Command sent', true);
                 }).catch(console.error);
             },
 
+            addMapper() {
+                this.parserMappers.push({ source: '', edge: '', target: '' });
+            },
+
+            removeMapper(index) {
+                this.parserMappers.splice(index, 1);
+            },
+
             parseOutput() {
-                let mappers = [];
-                try {
-                    mappers = JSON.parse(this.parserMappersRaw);
-                } catch (e) {
-                    toast('Invalid mappers JSON', false);
-                    return;
-                }
                 apiV2('POST', '/plugin/access/parse', {
                     output: this.outputResult.stdout || '',
                     parser_path: this.parserPath,
-                    mappers: mappers
+                    mappers: this.parserMappers
                 }).then((data) => {
                     if (data.error) { toast(data.error, false); return; }
                     this.parsedRelationships = data.relationships;
@@ -614,5 +696,13 @@
 }
 .search-results p:hover {
     background-color: #484848;
+}
+.payload-list {
+    max-height: 150px;
+    overflow-y: auto;
+    border: 1px solid #dbdbdb;
+    border-radius: 4px;
+    padding: 6px 8px;
+    background: #1a1a1a;
 }
 </style>

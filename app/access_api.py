@@ -77,7 +77,9 @@ class AccessApi:
         agent_search = dict(access=tuple(await self.auth_svc.get_permissions(request)), paw=data['paw'])
         agent = (await self.data_svc.locate('agents', match=agent_search))[0]
         executor = Executor(name=data['executor'], platform=agent.platform,
-                            command=data['command'], timeout=60)
+                            command=data['command'],
+                            timeout=int(data.get('timeout', 60)),
+                            payloads=data.get('payloads', []))
         ability = Ability(ability_id=str(uuid4()), name='Ad-hoc command', description='',
                           tactic='debug', technique_id='T0000', technique_name='Ad-hoc')
         ability.add_executor(executor)
